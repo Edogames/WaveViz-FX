@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 
 export type VisualMode = 'spectrum' | 'scope' | 'mirror' | 'tunnel' | 'particles' | 'morph' | 'radial' | 'waterfall' | 'ribbon';
-export type PaletteName = 'aurora' | 'electric' | 'ember' | 'ice' | 'orchid';
+export type PaletteName = string;
 export type FrequencyEmphasis = 'balanced' | 'bass' | 'mids' | 'treble';
 
 export interface VisualizerAnalyser {
@@ -16,6 +16,7 @@ interface Props {
   analyser: VisualizerAnalyser | null;
   mode: VisualMode;
   palette: PaletteName;
+  paletteColors?: string[];
   sensitivity: number;
   speed: number;
   emphasis: FrequencyEmphasis;
@@ -31,13 +32,21 @@ interface Palette {
   glow: string;
 }
 
-const palettes: Record<PaletteName, Palette> = {
+const palettes: Record<string, Palette> = {
   aurora: { a: '#46f3e2', b: '#42a6ff', c: '#a17aff', d: '#fd6fe6', glow: '70, 221, 255' },
   electric: { a: '#4cecff', b: '#2b85ff', c: '#a4f858', d: '#f6f36b', glow: '58, 207, 255' },
   ember: { a: '#fff16a', b: '#ff9f48', c: '#ff5575', d: '#bf5cff', glow: '255, 133, 71' },
   ice: { a: '#d6fff9', b: '#80eaff', c: '#64a6ff', d: '#9a8dff', glow: '133, 238, 255' },
   orchid: { a: '#ff8bda', b: '#d46aff', c: '#8e7dff', d: '#46cbff', glow: '217, 105, 255' },
 };
+
+function paletteFromColors(swatches: string[]): Palette {
+  const values = [0, 1, 2, 3].map((index) => swatches[index] ?? '#46f3e2');
+  const match = /^#([\da-f]{6})$/i.exec(values[0]);
+  const hex = match?.[1] ?? '46f3e2';
+  const glow = `${parseInt(hex.slice(0, 2), 16)}, ${parseInt(hex.slice(2, 4), 16)}, ${parseInt(hex.slice(4, 6), 16)}`;
+  return { a: values[0], b: values[1], c: values[2], d: values[3], glow };
+}
 
 interface Particle {
   x: number;
@@ -129,10 +138,10 @@ function focusPosition(emphasis: FrequencyEmphasis): number {
   return 0.52;
 }
 
-export function VisualizerCanvas({ analyser, mode, palette, sensitivity, speed, emphasis, active, transparent = false }: Props) {
+export function VisualizerCanvas({ analyser, mode, palette, paletteColors, sensitivity, speed, emphasis, active, transparent = false }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const optionsRef = useRef({ mode, palette, sensitivity, speed, emphasis, active, transparent });
-  optionsRef.current = { mode, palette, sensitivity, speed, emphasis, active, transparent };
+  const optionsRef = useRef({ mode, colors: paletteColors ? paletteFromColors(paletteColors) : palettes[palette] ?? palettes.aurora, sensitivity, speed, emphasis, active, transparent });
+  optionsRef.current = { mode, colors: paletteColors ? paletteFromColors(paletteColors) : palettes[palette] ?? palettes.aurora, sensitivity, speed, emphasis, active, transparent };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -183,7 +192,7 @@ export function VisualizerCanvas({ analyser, mode, palette, sensitivity, speed, 
 
     const background = (time: number, beat: number) => {
       const opts = optionsRef.current;
-      const colors = palettes[opts.palette];
+      const colors = opts.colors;
       if (opts.transparent) {
         ctx.clearRect(0, 0, width, height);
       } else {
@@ -222,7 +231,7 @@ export function VisualizerCanvas({ analyser, mode, palette, sensitivity, speed, 
 
     const drawSpectrum = (time: number, energy: number, beat: number) => {
       const opts = optionsRef.current;
-      const colors = palettes[opts.palette];
+      const colors = opts.colors;
       const count = Math.max(44, Math.min(118, Math.floor(width / 8.5)));
       const gap = Math.max(2, width / (count * 9.5));
       const barWidth = Math.max(2, width / count - gap);
@@ -266,7 +275,7 @@ export function VisualizerCanvas({ analyser, mode, palette, sensitivity, speed, 
 
     const drawScope = (time: number, energy: number, beat: number) => {
       const opts = optionsRef.current;
-      const colors = palettes[opts.palette];
+      const colors = opts.colors;
       const center = height * 0.52;
       const focusEnergy = sampleFrequency(frequencyData, analyser, focusPosition(opts.emphasis), opts.emphasis, opts.sensitivity);
       const amplitude = Math.min(height * 0.43, height * (0.1 + energy * 0.4 + beat * 0.045) * opts.sensitivity * (0.85 + focusEnergy * 0.25));
@@ -307,7 +316,7 @@ export function VisualizerCanvas({ analyser, mode, palette, sensitivity, speed, 
 
     const drawMorph = (time: number, energy: number, beat: number) => {
       const opts = optionsRef.current;
-      const colors = palettes[opts.palette];
+      const colors = opts.colors;
       const cx = width / 2;
       const cy = height / 2;
       const base = Math.min(width, height) * (0.22 + energy * 0.075 + beat * 0.045);
@@ -349,7 +358,7 @@ export function VisualizerCanvas({ analyser, mode, palette, sensitivity, speed, 
 
     const drawRadialSpectrum = (time: number, energy: number, beat: number) => {
       const opts = optionsRef.current;
-      const colors = palettes[opts.palette];
+      const colors = opts.colors;
       const cx = width / 2;
       const cy = height / 2;
       const count = Math.max(64, Math.min(144, Math.floor(Math.min(width, height) * 0.42)));
@@ -393,7 +402,7 @@ export function VisualizerCanvas({ analyser, mode, palette, sensitivity, speed, 
 
     const drawWaterfall = (time: number) => {
       const opts = optionsRef.current;
-      const colors = palettes[opts.palette];
+      const colors = opts.colors;
       if (time - lastWaterfallSample > 48) {
         const row = waterfallRows[waterfallCursor];
         for (let i = 0; i < row.length; i += 1) {
@@ -433,7 +442,7 @@ export function VisualizerCanvas({ analyser, mode, palette, sensitivity, speed, 
 
     const drawRibbons = (time: number, energy: number, beat: number) => {
       const opts = optionsRef.current;
-      const colors = palettes[opts.palette];
+      const colors = opts.colors;
       const colorsList = [colors.a, colors.b, colors.c, colors.d];
       const layers = 4;
       for (let layer = 0; layer < layers; layer += 1) {
@@ -463,7 +472,7 @@ export function VisualizerCanvas({ analyser, mode, palette, sensitivity, speed, 
 
     const drawMirror = (time: number, energy: number, beat: number) => {
       const opts = optionsRef.current;
-      const colors = palettes[opts.palette];
+      const colors = opts.colors;
       const cx = width / 2;
       const cy = height / 2;
       const radius = Math.min(width, height) * (0.14 + energy * 0.07 + beat * 0.045);
@@ -499,7 +508,7 @@ export function VisualizerCanvas({ analyser, mode, palette, sensitivity, speed, 
 
     const drawTunnel = (time: number, energy: number, beat: number) => {
       const opts = optionsRef.current;
-      const colors = palettes[opts.palette];
+      const colors = opts.colors;
       const cx = width / 2 + Math.sin(time / 1700) * width * 0.035;
       const cy = height / 2 + Math.cos(time / 1900) * height * 0.025;
       const rings = 18;
@@ -528,7 +537,7 @@ export function VisualizerCanvas({ analyser, mode, palette, sensitivity, speed, 
 
     const drawParticles = (time: number, energy: number, beat: number) => {
       const opts = optionsRef.current;
-      const colors = palettes[opts.palette];
+      const colors = opts.colors;
       const cx = width / 2;
       const cy = height / 2;
       const focusEnergy = sampleFrequency(frequencyData, analyser, focusPosition(opts.emphasis), opts.emphasis, opts.sensitivity);

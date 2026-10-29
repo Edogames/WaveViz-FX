@@ -4,6 +4,7 @@ import { VisualizerCanvas, type FrequencyEmphasis, type PaletteName, type Visual
 
 type Source = 'microphone' | 'file' | 'system' | null;
 type CloseBehavior = 'quit' | 'background';
+type WindowControlsPosition = 'left' | 'right';
 type IconName = 'mic' | 'file' | 'screen' | 'stop' | 'play' | 'pause' | 'fullscreen' | 'minimize' | 'close' | 'widget' | 'shuffle' | 'spark' | 'cycle' | 'chevron' | 'speaker' | 'wave';
 
 interface Preferences {
@@ -23,6 +24,8 @@ interface AudioInput {
 }
 
 const preferenceKey = 'waveviz.preferences.v1';
+const customPaletteKey = 'waveviz.custom-palettes.v1';
+type CustomPalette = WaveVizCustomPalette;
 const modes: { id: VisualMode; label: string; number: string; hint: string }[] = [
   { id: 'spectrum', label: 'Spectrum', number: '01', hint: 'Frequency bars' },
   { id: 'scope', label: 'Oscilloscope', number: '02', hint: 'Waveform trace' },
@@ -34,13 +37,27 @@ const modes: { id: VisualMode; label: string; number: string; hint: string }[] =
   { id: 'waterfall', label: 'Waterfall', number: '08', hint: 'Scrolling spectrogram' },
   { id: 'ribbon', label: 'Spectral Ribbons', number: '09', hint: 'Layered frequency waves' },
 ];
-const palettes: { id: PaletteName; label: string; swatches: string[] }[] = [
+const builtinPalettes: { id: PaletteName; label: string; swatches: string[] }[] = [
   { id: 'aurora', label: 'Aurora', swatches: ['#46f3e2', '#42a6ff', '#a17aff', '#fd6fe6'] },
   { id: 'electric', label: 'Electric', swatches: ['#4cecff', '#2b85ff', '#a4f858', '#f6f36b'] },
   { id: 'ember', label: 'Ember', swatches: ['#fff16a', '#ff9f48', '#ff5575', '#bf5cff'] },
   { id: 'ice', label: 'Ice', swatches: ['#d6fff9', '#80eaff', '#64a6ff', '#9a8dff'] },
   { id: 'orchid', label: 'Orchid', swatches: ['#ff8bda', '#d46aff', '#8e7dff', '#46cbff'] },
 ];
+function loadCustomPalettes(): CustomPalette[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(customPaletteKey) ?? '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is CustomPalette => item && typeof item.id === 'string' && typeof item.label === 'string' && Array.isArray(item.swatches) && item.swatches.length === 4 && item.swatches.every((color: unknown) => typeof color === 'string' && /^#[\da-f]{6}$/i.test(color))).slice(0, 48);
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomPalettes(palettes: CustomPalette[]): void {
+  try { localStorage.setItem(customPaletteKey, JSON.stringify(palettes)); } catch { /* local storage is optional */ }
+}
+
 const defaults: Preferences = {
   mode: 'spectrum',
   palette: 'aurora',
@@ -120,6 +137,7 @@ function startupMessage(): string {
 export default function App() {
   const isWidget = Boolean(window.wavevizDesktop?.isWidget);
   const isSettings = Boolean(window.wavevizDesktop?.isSettings);
+  const isColorPicker = Boolean(window.wavevizDesktop?.isColorPicker);
   const initialWidgetMode = window.wavevizDesktop?.widgetMode;
   const transparencyKey = isWidget ? `waveviz.widget-transparent.${window.wavevizDesktop?.widgetId ?? 'widget'}` : 'waveviz.window-transparent';
   const [preferences, setPreferences] = useState<Preferences>(() => {
@@ -141,7 +159,12 @@ export default function App() {
   const [duration, setDuration] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
   const [closeBehavior, setCloseBehavior] = useState<CloseBehavior>('background');
+  const [windowControlsPosition, setWindowControlsPosition] = useState<WindowControlsPosition>('right');
   const [widgets, setWidgets] = useState<WaveVizWidgetInfo[]>([]);
+  const [selectedWidgetId, setSelectedWidgetId] = useState<number | null>(null);
+  const [customPalettes, setCustomPalettes] = useState<CustomPalette[]>(loadCustomPalettes);
+  const [newPaletteName, setNewPaletteName] = useState('');
+  const [newPaletteColors, setNewPaletteColors] = useState<string[]>(builtinPalettes[0].swatches);
   const [widgetModeChoice, setWidgetModeChoice] = useState<VisualMode>(() => loadPreferences().mode);
   const [widgetHasSignal, setWidgetHasSignal] = useState(false);
   const [transparent, setTransparent] = useState(() => {
@@ -156,6 +179,7 @@ export default function App() {
   if (!engineRef.current) engineRef.current = new AudioEngine();
   const engine = engineRef.current;
   const isDesktopShell = Boolean(window.wavevizDesktop);
+  const palettes = [...builtinPalettes, ...customPalettes];
   const sharedAnalysisRef = useRef<WaveVizAnalysisFrame | null>(null);
   const sharedAnalyserRef = useRef<VisualizerAnalyser | null>(null);
   if (!sharedAnalyserRef.current) {
@@ -177,13 +201,19 @@ export default function App() {
   }
 
   useEffect(() => {
-    void window.wavevizDesktop?.setTransparency(transparent);
-    document.body.classList.toggle('window-transparent', transparent);
-    document.documentElement.classList.toggle('window-transparent', transparent);
+    const transparencyApplies = !isSettings && !isColorPicker;
+    if (transparencyApplies) {
+      void window.wavevizDesktop?.setTransparency(transparent);
+      document.body.classList.toggle('window-transparent', transparent);
+      document.documentElement.classList.toggle('window-transparent', transparent);
+      try { localStorage.setItem(transparencyKey, String(transparent)); } catch { /* optional window preference */ }
+    } else {
+      document.body.classList.remove('window-transparent');
+      document.documentElement.classList.remove('window-transparent');
+    }
     document.body.classList.toggle('widget-window', isWidget);
     document.documentElement.classList.toggle('widget-window', isWidget);
-    try { localStorage.setItem(transparencyKey, String(transparent)); } catch { /* optional window preference */ }
-  }, [isWidget, transparencyKey, transparent]);
+  }, [isColorPicker, isSettings, isWidget, transparencyKey, transparent]);
 
   useEffect(() => {
     if (isWidget) {
@@ -194,6 +224,22 @@ export default function App() {
       });
     }
   }, [isWidget]);
+
+  useEffect(() => {
+    if (!isWidget) return;
+    return window.wavevizDesktop?.onWidgetModeChanged((mode) => {
+      if (modes.some((item) => item.id === mode)) setPreferences((previous) => ({ ...previous, mode }));
+    });
+  }, [isWidget]);
+
+  useEffect(() => {
+    if (!isDesktopShell) return;
+    return window.wavevizDesktop?.onCustomPalettesChanged((items) => {
+      const valid = items.filter((item) => item && typeof item.id === 'string' && typeof item.label === 'string' && Array.isArray(item.swatches) && item.swatches.length === 4 && item.swatches.every((color) => typeof color === 'string' && /^#[\da-f]{6}$/i.test(color))).slice(0, 48);
+      setCustomPalettes(valid);
+      saveCustomPalettes(valid);
+    });
+  }, [isDesktopShell]);
 
   useEffect(() => {
     if (!isDesktopShell || isWidget || isSettings) return;
@@ -234,17 +280,27 @@ export default function App() {
     void window.wavevizDesktop?.getCloseBehavior().then(setCloseBehavior);
   }, [isSettings]);
 
+  useEffect(() => {
+    if (!isDesktopShell || isWidget || isColorPicker) return;
+    void window.wavevizDesktop?.getWindowControlsPosition().then(setWindowControlsPosition);
+    if (isSettings) return;
+    return window.wavevizDesktop?.onWindowControlsPositionChanged(setWindowControlsPosition);
+  }, [isColorPicker, isDesktopShell, isSettings, isWidget]);
+
   const updatePreference = <K extends keyof Preferences>(key: K, value: Preferences[K]) => {
     setPreferences((previous) => ({ ...previous, [key]: value }));
   };
 
   useEffect(() => {
-    try {
-      localStorage.setItem(preferenceKey, JSON.stringify(preferences));
-    } catch {
+    if (isWidget || isSettings || isColorPicker) return;
+    try { localStorage.setItem(preferenceKey, JSON.stringify(preferences)); } catch {
       // Private browsing or storage restrictions should not prevent visualization.
     }
-  }, [preferences]);
+  }, [isColorPicker, isWidget, preferences]);
+
+  useEffect(() => {
+    if (selectedWidgetId !== null && !widgets.some((widget) => widget.id === selectedWidgetId)) setSelectedWidgetId(null);
+  }, [selectedWidgetId, widgets]);
 
   useEffect(() => {
     try { localStorage.setItem('waveviz.mic-enabled', String(micEnabled)); } catch { /* optional privacy preference */ }
@@ -481,22 +537,77 @@ export default function App() {
     }
   };
 
+  const windowControls = (
+    <div className="window-controls-group" aria-label="Window controls">
+      {isDesktopShell && <button className="round-button window-control" type="button" onClick={() => void window.wavevizDesktop?.minimizeWindow()} title="Minimize window" aria-label="Minimize window"><Icon name="minimize" size={15} /></button>}
+      <button className={`round-button window-control ${fullscreen ? 'control-active' : ''}`} type="button" title={fullscreen ? 'Exit full screen' : 'Enter full screen'} onClick={() => void toggleFullscreen()} aria-label={fullscreen ? 'Exit full screen' : 'Enter full screen'}><Icon name="fullscreen" size={15} /></button>
+      {isDesktopShell && <button className="round-button window-control window-close-control" type="button" onClick={() => void window.wavevizDesktop?.closeWindow()} title={closeBehavior === 'quit' ? 'Close window and quit WaveViz' : 'Close window and keep WaveViz running'} aria-label="Close window"><Icon name="close" size={15} /></button>}
+    </div>
+  );
+
   const seek = (value: number) => {
     engine.seekFile(value);
     setCurrentTime(value);
   };
 
   const selectedMode = modes.find((item) => item.id === preferences.mode) ?? modes[0];
-  const activePalette = palettes.find((item) => item.id === preferences.palette) ?? palettes[0];
+  const activePalette = palettes.find((item) => item.id === preferences.palette) ?? builtinPalettes[0];
   const analyser = engine.analyserNode;
   const sampleRateLabel = analyser ? `${(analyser.context.sampleRate / 1000).toFixed(1)} kHz` : '— kHz';
   const signalLive = Boolean(activeSource && (activeSource !== 'file' || playing));
   const fileReady = Boolean(audioRef.current?.src);
 
+  const saveNewPalette = () => {
+    const label = newPaletteName.trim() || `Custom ${customPalettes.length + 1}`;
+    const palette: CustomPalette = {
+      id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      label,
+      swatches: [...newPaletteColors] as CustomPalette['swatches'],
+    };
+    const next = [...customPalettes, palette].slice(-48);
+    setCustomPalettes(next);
+    saveCustomPalettes(next);
+    window.wavevizDesktop?.publishCustomPalettes(next);
+    setNewPaletteName('');
+  };
+
+  const removeCustomPalette = (id: string) => {
+    const next = customPalettes.filter((palette) => palette.id !== id);
+    setCustomPalettes(next);
+    saveCustomPalettes(next);
+    window.wavevizDesktop?.publishCustomPalettes(next);
+  };
+
+  if (isColorPicker) {
+    return (
+      <main className="color-picker-shell">
+        <header className="color-picker-heading"><span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /><i /></span><div><span className="settings-eyebrow">WAVEVIZ FX</span><h1>Color Studio</h1></div></header>
+        <section className="color-studio-section">
+          <div className="settings-section-title">START WITH A COLOR SET</div>
+          <div className="color-studio-presets">{builtinPalettes.map((palette) => <button className="color-studio-preset" type="button" key={palette.id} onClick={() => setNewPaletteColors(palette.swatches)} title={`Use ${palette.label} colors`}><span>{palette.swatches.map((color, index) => <i key={`${color}-${index}`} style={{ backgroundColor: color }} />)}</span><small>{palette.label}</small></button>)}</div>
+        </section>
+        <section className="color-studio-section">
+          <div className="settings-section-title">CREATE A CUSTOM COLOR SET</div>
+          <label className="color-name-field">NAME <input value={newPaletteName} maxLength={24} onChange={(event) => setNewPaletteName(event.currentTarget.value)} placeholder="My colors" /></label>
+          <div className="color-picker-inputs">{newPaletteColors.map((color, index) => <label className="color-picker-input" key={index}><span>COLOR 0{index + 1}</span><input type="color" value={color} onChange={(event) => { const value = event.currentTarget.value; setNewPaletteColors((previous) => previous.map((item, itemIndex) => itemIndex === index ? value : item)); }} /></label>)}</div>
+          <button className="color-save-button" type="button" onClick={saveNewPalette}>SAVE COLOR SET</button>
+        </section>
+        <section className="color-studio-section saved-colors-section">
+          <div className="settings-section-title">SAVED COLOR SETS <span>{customPalettes.length}</span></div>
+          {customPalettes.length === 0 ? <p className="color-empty-note">Your saved color sets will appear here and in the main window.</p> : <div className="saved-color-list">{customPalettes.map((palette) => <div className="saved-color-row" key={palette.id}><span>{palette.swatches.map((color, index) => <i key={`${color}-${index}`} style={{ backgroundColor: color }} />)}</span><strong>{palette.label}</strong><button type="button" onClick={() => removeCustomPalette(palette.id)} aria-label={`Remove ${palette.label}`}>×</button></div>)}</div>}
+        </section>
+      </main>
+    );
+  }
+
   if (isSettings) {
     const chooseCloseBehavior = (behavior: CloseBehavior) => {
       setCloseBehavior(behavior);
       void window.wavevizDesktop?.setCloseBehavior(behavior);
+    };
+    const chooseWindowControlsPosition = (position: WindowControlsPosition) => {
+      setWindowControlsPosition(position);
+      void window.wavevizDesktop?.setWindowControlsPosition(position);
     };
     return (
       <main className="settings-shell">
@@ -509,6 +620,18 @@ export default function App() {
           <button type="button" className={`settings-choice ${closeBehavior === 'quit' ? 'is-selected' : ''}`} role="radio" aria-checked={closeBehavior === 'quit'} onClick={() => chooseCloseBehavior('quit')}>
             <span className="choice-radio" /><span><strong>Quit WaveViz</strong><small>Closing the main window quits the app and closes its desktop widgets.</small></span>
           </button>
+        </section>
+        <section className="settings-section window-controls-setting">
+          <div className="settings-section-title">WINDOW CONTROL BUTTONS</div>
+          <div className="settings-section-hint">Choose which side of the title bar holds minimize, maximize, and close.</div>
+          <div className="settings-inline-choices" role="radiogroup" aria-label="Window control button position">
+            <button type="button" className={`settings-choice ${windowControlsPosition === 'left' ? 'is-selected' : ''}`} role="radio" aria-checked={windowControlsPosition === 'left'} onClick={() => chooseWindowControlsPosition('left')}>
+              <span className="choice-radio" /><span><strong>Left</strong><small>Beside the app name</small></span>
+            </button>
+            <button type="button" className={`settings-choice ${windowControlsPosition === 'right' ? 'is-selected' : ''}`} role="radio" aria-checked={windowControlsPosition === 'right'} onClick={() => chooseWindowControlsPosition('right')}>
+              <span className="choice-radio" /><span><strong>Right</strong><small>Beside the settings</small></span>
+            </button>
+          </div>
         </section>
         <footer className="settings-footer">Changes are saved automatically on this computer.</footer>
       </main>
@@ -525,7 +648,7 @@ export default function App() {
           </div>
         </header>
         <div className="widget-visual" aria-label={`${selectedMode.label} visualizer`}>
-          <VisualizerCanvas analyser={sharedAnalyserRef.current} mode={preferences.mode} palette={preferences.palette} sensitivity={preferences.sensitivity} speed={preferences.speed} emphasis={preferences.emphasis} active={widgetHasSignal} transparent={transparent} />
+          <VisualizerCanvas analyser={sharedAnalyserRef.current} mode={preferences.mode} palette={preferences.palette} paletteColors={activePalette.swatches} sensitivity={preferences.sensitivity} speed={preferences.speed} emphasis={preferences.emphasis} active={widgetHasSignal} transparent={transparent} />
         </div>
       </main>
     );
@@ -543,12 +666,15 @@ export default function App() {
       />
       <input ref={pickerRef} className="visually-hidden" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.aiff" onChange={onFileSelected} />
 
-      <header className="topbar">
-        <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true"><i /><i /><i /><i /><i /></div>
-          <div className="brand-name">wave<span>viz</span><sup>FX</sup></div>
-          <div className="brand-divider" />
-          <div className="brand-kicker">REAL-TIME AUDIO LAB</div>
+      <header className={`topbar ${windowControlsPosition === 'left' ? 'controls-on-left' : 'controls-on-right'}`}>
+        <div className="topbar-left">
+          {isDesktopShell && windowControlsPosition === 'left' && windowControls}
+          <div className="brand-lockup">
+            <div className="brand-mark" aria-hidden="true"><i /><i /><i /><i /><i /></div>
+            <div className="brand-name">wave<span>viz</span><sup>FX</sup></div>
+            <div className="brand-divider" />
+            <div className="brand-kicker">REAL-TIME AUDIO LAB</div>
+          </div>
         </div>
         <div className="topbar-right">
           <div className={`live-status ${signalLive ? 'is-live' : ''}`}>
@@ -558,9 +684,7 @@ export default function App() {
           <div className="topbar-separator" />
           {isDesktopShell && <button className={`topbar-action ${transparent ? 'action-active' : ''}`} type="button" onClick={() => setTransparent((value) => !value)} title="Toggle transparent window background">{transparent ? 'GLASS ON' : 'GLASS OFF'}</button>}
           {isDesktopShell && <button className="topbar-action" type="button" onClick={() => void window.wavevizDesktop?.openSettings()} title="Open settings">SETTINGS</button>}
-          {isDesktopShell && <button className="round-button window-control" type="button" onClick={() => void window.wavevizDesktop?.minimizeWindow()} title="Minimize window" aria-label="Minimize window"><Icon name="minimize" size={15} /></button>}
-          <button className={`round-button window-control ${fullscreen ? 'control-active' : ''}`} type="button" title={fullscreen ? 'Exit full screen' : 'Enter full screen'} onClick={() => void toggleFullscreen()} aria-label={fullscreen ? 'Exit full screen' : 'Enter full screen'}><Icon name="fullscreen" size={15} /></button>
-          {isDesktopShell && <button className="round-button window-control window-close-control" type="button" onClick={() => void window.wavevizDesktop?.closeWindow()} title={closeBehavior === 'quit' ? 'Close window and quit WaveViz' : 'Close window and keep WaveViz running'} aria-label="Close window"><Icon name="close" size={15} /></button>}
+          {(!isDesktopShell || windowControlsPosition === 'right') && windowControls}
         </div>
       </header>
 
@@ -587,6 +711,7 @@ export default function App() {
                 analyser={analyser}
                 mode={preferences.mode}
                 palette={preferences.palette}
+                paletteColors={activePalette.swatches}
                 sensitivity={preferences.sensitivity}
                 speed={preferences.speed}
                 emphasis={preferences.emphasis}
@@ -628,10 +753,14 @@ export default function App() {
               {widgets.length === 0 && <span className="widget-list-empty">No widgets yet</span>}
               {widgets.map((widget, index) => {
                 const mode = modes.find((preset) => preset.id === widget.mode) ?? modes[0];
-                return <div className="desktop-widget-row" key={widget.id}>
-                  <button className="desktop-widget-focus" type="button" onClick={() => void window.wavevizDesktop?.focusWidget(widget.id)} title={`Focus ${mode.label} widget`}><span className="widget-row-dot" /> WIDGET {index + 1} <b>{mode.label.toUpperCase()}</b></button>
+                const selected = selectedWidgetId === widget.id;
+                return <div className={`desktop-widget-entry ${selected ? 'widget-entry-selected' : ''}`} key={widget.id}>
+                  <div className="desktop-widget-row">
+                  <button className="desktop-widget-focus" type="button" onClick={() => { setSelectedWidgetId(widget.id); void window.wavevizDesktop?.focusWidget(widget.id); }} title={`Select ${mode.label} widget and open it`} aria-pressed={selected}><span className="widget-row-dot" /> WIDGET {index + 1} <b>{mode.label.toUpperCase()}</b></button>
                   <button className={`desktop-widget-pin ${widget.alwaysOnTop ? 'is-on' : ''}`} type="button" onClick={() => void window.wavevizDesktop?.setWidgetAlwaysOnTop(widget.id, !widget.alwaysOnTop)} aria-label={`${widget.alwaysOnTop ? 'Unpin' : 'Pin'} ${mode.label} widget`} title={`${widget.alwaysOnTop ? 'Turn off' : 'Turn on'} always on top`}>PIN</button>
                   <button className="desktop-widget-destroy" type="button" onClick={() => void window.wavevizDesktop?.destroyWidget(widget.id)} aria-label={`Destroy ${mode.label} widget`} title="Destroy widget">×</button>
+                  </div>
+                  {selected && <label className="widget-visualizer-edit"><span>VISUALIZER</span><select aria-label={`Visualizer for widget ${index + 1}`} value={widget.mode} onChange={(event) => void window.wavevizDesktop?.setWidgetMode(widget.id, event.currentTarget.value as VisualMode)}>{modes.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>}
                 </div>;
               })}
             </div>
@@ -675,10 +804,10 @@ export default function App() {
           </div>
 
           <div className="panel-section palette-section">
-            <div className="panel-heading"><div><span className="panel-number">04</span><h2>COLOR FIELD</h2></div><span className="palette-name">{activePalette.label.toUpperCase()}</span></div>
+            <div className="panel-heading"><div><span className="panel-number">04</span><h2>COLOR FIELD</h2></div><div className="palette-heading-actions"><span className="palette-name">{activePalette.label.toUpperCase()}</span>{isDesktopShell && <button className="palette-edit-button" type="button" onClick={() => void window.wavevizDesktop?.openColorPicker()} title="Open Color Studio">CUSTOM +</button>}</div></div>
             <div className="palette-list" role="group" aria-label="Color palette">
               {palettes.map((item) => <button key={item.id} className={`palette-swatch ${preferences.palette === item.id ? 'palette-selected' : ''}`} type="button" onClick={() => updatePreference('palette', item.id)} aria-label={`${item.label} color palette`} title={item.label}>
-                <span>{item.swatches.map((color) => <i key={color} style={{ backgroundColor: color }} />)}</span>{preferences.palette === item.id && <b>✓</b>}
+                <span>{item.swatches.map((color, index) => <i key={`${color}-${index}`} style={{ backgroundColor: color }} />)}</span>{preferences.palette === item.id && <b>✓</b>}
               </button>)}
             </div>
           </div>

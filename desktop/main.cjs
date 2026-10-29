@@ -4,7 +4,9 @@ const { app, BrowserWindow, desktopCapturer, ipcMain, session } = require('elect
 
 let mainWindow = null;
 let settingsWindow = null;
+let colorPickerWindow = null;
 let closeBehavior = 'background';
+let windowControlsPosition = 'right';
 let isQuitting = false;
 const widgetWindows = new Map();
 let viteServer = null;
@@ -19,6 +21,9 @@ function loadSettings() {
     if (settings.closeBehavior === 'quit' || settings.closeBehavior === 'background') {
       closeBehavior = settings.closeBehavior;
     }
+    if (settings.windowControlsPosition === 'left' || settings.windowControlsPosition === 'right') {
+      windowControlsPosition = settings.windowControlsPosition;
+    }
   } catch {
     // First launch keeps the app running when its main window is closed.
   }
@@ -26,7 +31,7 @@ function loadSettings() {
 
 function saveSettings() {
   fs.mkdirSync(app.getPath('userData'), { recursive: true });
-  fs.writeFileSync(settingsPath(), JSON.stringify({ closeBehavior }, null, 2));
+  fs.writeFileSync(settingsPath(), JSON.stringify({ closeBehavior, windowControlsPosition }, null, 2));
 }
 
 function configureMediaCapture() {
@@ -137,9 +142,9 @@ async function openSettingsWindow() {
   }
   settingsWindow = new BrowserWindow({
     width: 520,
-    height: 360,
+    height: 500,
     minWidth: 460,
-    minHeight: 320,
+    minHeight: 460,
     title: 'WaveViz Settings',
     parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
     modal: false,
@@ -158,6 +163,36 @@ async function openSettingsWindow() {
   await loadRenderer(settingsWindow);
   settingsWindow.show();
   return settingsWindow.id;
+}
+
+async function openColorPickerWindow() {
+  if (colorPickerWindow && !colorPickerWindow.isDestroyed()) {
+    colorPickerWindow.show();
+    colorPickerWindow.focus();
+    return colorPickerWindow.id;
+  }
+  colorPickerWindow = new BrowserWindow({
+    width: 560,
+    height: 540,
+    minWidth: 500,
+    minHeight: 480,
+    title: 'WaveViz Color Studio',
+    parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+    backgroundColor: '#080d18',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+  colorPickerWindow.__wavevizPage = 'colors';
+  colorPickerWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  colorPickerWindow.on('closed', () => { colorPickerWindow = null; });
+  await loadRenderer(colorPickerWindow);
+  colorPickerWindow.show();
+  return colorPickerWindow.id;
 }
 
 async function createWidgetWindow(mode) {
@@ -206,6 +241,18 @@ ipcMain.handle('waveviz:open-widget', (_event, requestedMode) => {
   const mode = ['spectrum', 'scope', 'mirror', 'tunnel', 'particles', 'morph', 'radial', 'waterfall', 'ribbon'].includes(requestedMode) ? requestedMode : 'spectrum';
   return createWidgetWindow(mode);
 });
+ipcMain.handle('waveviz:set-widget-mode', (event, id, requestedMode) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return false;
+  const modes = ['spectrum', 'scope', 'mirror', 'tunnel', 'particles', 'morph', 'radial', 'waterfall', 'ribbon'];
+  if (!modes.includes(requestedMode)) return false;
+  const entry = Array.from(widgetWindows).find(([window]) => window.id === id);
+  if (!entry) return false;
+  const [window, settings] = entry;
+  settings.mode = requestedMode;
+  window.webContents.send('waveviz:widget-mode-changed', requestedMode);
+  broadcastWidgetList();
+  return true;
+});
 ipcMain.handle('waveviz:get-widgets', (event) => {
   if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return [];
   return Array.from(widgetWindows, ([window, settings]) => ({ id: window.id, ...settings }));
@@ -241,6 +288,17 @@ ipcMain.on('waveviz:analysis-frame', (event, frame) => {
   }
 });
 ipcMain.handle('waveviz:open-settings', () => openSettingsWindow());
+ipcMain.handle('waveviz:open-color-picker', (event) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return;
+  return openColorPickerWindow();
+});
+ipcMain.on('waveviz:custom-palettes-updated', (event, palettes) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== colorPickerWindow || !Array.isArray(palettes)) return;
+  const safePalettes = palettes.filter((palette) => palette && typeof palette.id === 'string' && typeof palette.label === 'string' && Array.isArray(palette.swatches) && palette.swatches.length === 4 && palette.swatches.every((color) => typeof color === 'string' && /^#[\da-f]{6}$/i.test(color))).slice(0, 48);
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('waveviz:custom-palettes-changed', safePalettes);
+  }
+});
 ipcMain.handle('waveviz:get-close-behavior', (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   return window === settingsWindow ? closeBehavior : 'background';
@@ -250,6 +308,17 @@ ipcMain.handle('waveviz:set-close-behavior', (event, behavior) => {
   if (window !== settingsWindow || (behavior !== 'quit' && behavior !== 'background')) return false;
   closeBehavior = behavior;
   saveSettings();
+  return true;
+});
+ipcMain.handle('waveviz:get-window-controls-position', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  return window === mainWindow || window === settingsWindow ? windowControlsPosition : 'right';
+});
+ipcMain.handle('waveviz:set-window-controls-position', (event, position) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== settingsWindow || (position !== 'left' && position !== 'right')) return false;
+  windowControlsPosition = position;
+  saveSettings();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('waveviz:window-controls-position-changed', position);
   return true;
 });
 ipcMain.handle('waveviz:close-window', (event) => {
