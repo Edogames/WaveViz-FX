@@ -1,0 +1,32 @@
+{
+  "name": "waveviz",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Cross-platform retro real-time audio visualizer.",
+  "packageManager": "pnpm@11.25.0",
+  "type": "module",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "desktop:dev": "electron .",
+    "package:mac": "pnpm build && electron-builder --mac --arm64 --dir --publish never --config electron-builder.config.cjs && rm -f release/WaveViz-FX-1.0.0-arm64-mac.zip && (cd release/mac-arm64 && zip -r -X -y ../WaveViz-FX-1.0.0-arm64-mac.zip 'WaveViz FX.app')",
+    "package:win": "pnpm build && electron-builder --win nsis --x64 --arm64 --publish never --config electron-builder.config.cjs",
+    "package:linux": "pnpm build && electron-builder --linux AppImage deb --x64 --arm64 --publish never --config electron-builder.config.cjs",
+    "package:all": "pnpm package:mac && pnpm package:win && pnpm package:linux"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "electron": "45.1.0",
+    "electron-builder": "26.18.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}
